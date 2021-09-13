@@ -18,10 +18,33 @@ let parserOpts = {
   revertCorrespondence: ['header', 'hash'],
 };
 
+const jiraIssuePattern = /([A-Z]+-[0-9]+)/g;
+
 let writerOpts = {
   transform: function(commit, context) {
     let discard = true;
-    let issues = [];
+
+    const issueUrl = context.packageData.bugs && context.packageData.bugs.url;
+
+    /* Issues detected using the parser */
+    const issuesFromReferences = commit.references.map(ref => ref?.issue);
+    /* Issues detected using our regex */
+    const issuesFromPattern =  commit.footer ? 
+    [...commit.footer.matchAll(jiraIssuePattern)]
+      .map(res => Array.isArray(res) ? res[0] : res)
+      .map(res => Array.isArray(res) ? res[0] : res) 
+    : [];
+
+    const issues = [...issuesFromReferences, ...issuesFromPattern]
+      // Remove empty or invalid issues
+      .filter(issue => !!issue && typeof issue === 'string')
+      // Remove the leading #
+      .map(issue => issue.replace('#', ''))
+      // Remove duplicates
+      .filter((issue,  index, issues) => issues.indexOf(issue) === index);
+
+    commit.references = issues.map((issue) => formatIssue(issueUrl, issue))
+    .join(', ');
 
     commit.notes.forEach(function(note) {
       note.title = 'BREAKING CHANGES';
@@ -58,20 +81,12 @@ let writerOpts = {
       commit.hash = commit.hash.substring(0, 7);
     }
 
-    const issueUrl = context.packageData.bugs && context.packageData.bugs.url;
-
     if (typeof commit.subject === 'string') {
       commit.subject = commit.subject.replace(/#([a-zA-Z0-9\-]+)/g, function(_, issue) {
         issues.push(issue);
         return formatIssue(issueUrl, issue);
       });
     }
-
-    // remove references that already appear in the subject
-    commit.references = commit.references
-      .filter((reference) => issues.indexOf(reference.issue) === -1)
-      .map((reference) => formatIssue(issueUrl, reference.issue))
-      .join(', ');
 
     return commit;
   },
